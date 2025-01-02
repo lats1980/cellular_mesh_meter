@@ -17,6 +17,9 @@
 #include "ble_utils.h"
 #endif
 
+#include <zephyr/drivers/uart.h>
+#include <zephyr/usb/usb_device.h>
+
 LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
 #define OT_CONNECTION_LED DK_LED1
@@ -124,7 +127,7 @@ int main(void)
 {
 	int ret;
 
-	LOG_INF("Start CoAP-client sample");
+	LOG_INF("Start Cellular Mesh Meter sample");
 
 	if (IS_ENABLED(CONFIG_RAM_POWER_DOWN_LIBRARY)) {
 		power_down_unused_ram();
@@ -155,6 +158,41 @@ int main(void)
 	}
 
 #endif /* CONFIG_BT_NUS */
+
+#if DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_shell_uart), zephyr_cdc_acm_uart)
+	const struct device *dev;
+	uint32_t dtr = 0U;
+
+	ret = usb_enable(NULL);
+	if (ret != 0 && ret != -EALREADY) {
+		LOG_ERR("Failed to enable USB");
+		return 0;
+	}
+
+	dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
+	if (dev == NULL) {
+		LOG_ERR("Failed to find specific UART device");
+		return 0;
+	}
+
+	LOG_INF("Waiting for host to be ready to communicate");
+
+	/* Data Terminal Ready - check if host is ready to communicate */
+	while (!dtr) {
+		ret = uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
+		if (ret) {
+			LOG_ERR("Failed to get Data Terminal Ready line state: %d",
+				ret);
+			continue;
+		}
+		k_msleep(100);
+	}
+
+	/* Data Carrier Detect Modem - mark connection as established */
+	(void)uart_line_ctrl_set(dev, UART_LINE_CTRL_DCD, 1);
+	/* Data Set Ready - the NCP SoC is ready to communicate */
+	(void)uart_line_ctrl_set(dev, UART_LINE_CTRL_DSR, 1);
+#endif
 
 	coap_client_utils_init(on_ot_connect, on_ot_disconnect, on_mtd_mode_toggle);
 
