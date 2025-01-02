@@ -10,8 +10,8 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-#ifndef __COAP_CLIENT_UTILS_H__
-#define __COAP_CLIENT_UTILS_H__
+#ifndef __COAP_METER_UTILS_H__
+#define __COAP_METER_UTILS_H__
 
 /** @brief Type indicates function called when OpenThread connection
  *         is established.
@@ -37,7 +37,7 @@ typedef void (*mtd_mode_toggle_cb_t)(uint32_t val);
  */
 void coap_client_utils_init(ot_connection_cb_t on_connect,
 			    ot_disconnection_cb_t on_disconnect,
-			    mtd_mode_toggle_cb_t on_toggle);
+				mtd_mode_toggle_cb_t on_toggle);
 
 /** @brief Toggle light on the CoAP server node.
  *

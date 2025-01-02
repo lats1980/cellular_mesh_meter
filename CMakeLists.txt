@@ -7,11 +7,11 @@ cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
-project(openthread_coap_client)
+project(openthread_cellular_mesh_meter)
 
 # NORDIC SDK APP START
-target_sources(app PRIVATE src/coap_client.c
-			   src/coap_client_utils.c)
+target_sources(app PRIVATE src/main.c
+			   src/coap_meter_utils.c)
 
 target_include_directories(app PUBLIC ../coap_server/interface)
 # NORDIC SDK APP END

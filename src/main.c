@@ -11,13 +11,13 @@
 #include <zephyr/device.h>
 #include <zephyr/pm/device.h>
 
-#include "coap_client_utils.h"
+#include "coap_meter_utils.h"
 
 #if CONFIG_BT_NUS
 #include "ble_utils.h"
 #endif
 
-LOG_MODULE_REGISTER(coap_client, CONFIG_COAP_CLIENT_LOG_LEVEL);
+LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
 #define OT_CONNECTION_LED DK_LED1
 #define BLE_CONNECTION_LED DK_LED2

@@ -8,12 +8,12 @@ menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu
 
-module = COAP_CLIENT
-module-str = CoAP client
+module = CELLULAR_MESH_METER
+module-str = Cellular mesh meter
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
 
-module = COAP_CLIENT_UTILS
-module-str = CoAP client utilities
+module = CELLULAR_MESH_METER_UTILS
+module-str = Cellular mesh meter utilities
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
 
 module = BLE_UTILS

@@ -12,9 +12,9 @@
 #include <zephyr/net/socket.h>
 #include <openthread/thread.h>
 
-#include "coap_client_utils.h"
+#include "coap_meter_utils.h"
 
-LOG_MODULE_REGISTER(coap_client_utils, CONFIG_COAP_CLIENT_UTILS_LOG_LEVEL);
+LOG_MODULE_REGISTER(cellular_mesh_meter_util, CONFIG_CELLULAR_MESH_METER_UTILS_LOG_LEVEL);
 
 #define RESPONSE_POLL_PERIOD 100
 
@@ -22,10 +22,10 @@ static uint32_t poll_period;
 
 static bool is_connected;
 
-#define COAP_CLIENT_WORKQ_STACK_SIZE 2048
-#define COAP_CLIENT_WORKQ_PRIORITY 5
+#define COAP_WORKQ_STACK_SIZE 2048
+#define COAP_WORKQ_PRIORITY 5
 
-K_THREAD_STACK_DEFINE(coap_client_workq_stack_area, COAP_CLIENT_WORKQ_STACK_SIZE);
+K_THREAD_STACK_DEFINE(coap_client_workq_stack_area, COAP_WORKQ_STACK_SIZE);
 static struct k_work_q coap_client_workq;
 
 static struct k_work unicast_light_work;
@@ -266,7 +266,7 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 
 	k_work_queue_start(&coap_client_workq, coap_client_workq_stack_area,
 					K_THREAD_STACK_SIZEOF(coap_client_workq_stack_area),
-					COAP_CLIENT_WORKQ_PRIORITY, NULL);
+					COAP_WORKQ_PRIORITY, NULL);
 
 	k_work_init(&on_connect_work, on_connect);
 	k_work_init(&on_disconnect_work, on_disconnect);
