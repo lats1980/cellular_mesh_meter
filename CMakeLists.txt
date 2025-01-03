@@ -12,8 +12,6 @@ project(openthread_cellular_mesh_meter)
 # NORDIC SDK APP START
 target_sources(app PRIVATE src/main.c
 			   src/coap_meter_utils.c)
-
-target_include_directories(app PUBLIC ../coap_server/interface)
 # NORDIC SDK APP END
 
 target_sources_ifdef(CONFIG_BT_NUS app PRIVATE src/ble_utils.c)

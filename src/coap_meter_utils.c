@@ -5,12 +5,10 @@
  */
 
 #include <zephyr/kernel.h>
-#include <coap_server_client_interface.h>
 #include <net/coap_utils.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/openthread.h>
 #include <zephyr/net/socket.h>
-#include <openthread/thread.h>
 
 #include "coap_meter_utils.h"
 
@@ -28,17 +26,15 @@ static bool is_connected;
 K_THREAD_STACK_DEFINE(coap_client_workq_stack_area, COAP_WORKQ_STACK_SIZE);
 static struct k_work_q coap_client_workq;
 
-static struct k_work unicast_light_work;
-static struct k_work multicast_light_work;
 static struct k_work toggle_MTD_SED_work;
-static struct k_work provisioning_work;
+static struct k_work modem_discover_work;
 static struct k_work on_connect_work;
 static struct k_work on_disconnect_work;
 
 mtd_mode_toggle_cb_t on_mtd_mode_toggle;
 
 /* Options supported by the server */
-static const char *const light_option[] = { LIGHT_URI_PATH, NULL };
+static const char *const modem_option[] = { MODEM_URI_PATH, NULL };
 static const char *const provisioning_option[] = { PROVISIONING_URI_PATH,
 						   NULL };
 
@@ -59,6 +55,166 @@ static struct sockaddr_in6 unique_local_addr = {
 	.sin6_addr.s6_addr = {0, },
 	.sin6_scope_id = 0U
 };
+
+struct server_context {
+	struct otInstance *ot;
+	bool provisioning_enabled;
+	modem_request_callback_t on_modem_request;
+	provisioning_request_callback_t on_provisioning_request;
+};
+
+static struct server_context srv_context = {
+	.ot = NULL,
+	.provisioning_enabled = false,
+	.on_modem_request = NULL,
+	.on_provisioning_request = NULL,
+};
+
+/**@brief Definition of CoAP resources for provisioning. */
+static otCoapResource provisioning_resource = {
+	.mUriPath = PROVISIONING_URI_PATH,
+	.mHandler = NULL,
+	.mContext = NULL,
+	.mNext = NULL,
+};
+
+/**@brief Definition of CoAP resources for modem. */
+static otCoapResource modem_resource = {
+	.mUriPath = MODEM_URI_PATH,
+	.mHandler = NULL,
+	.mContext = NULL,
+	.mNext = NULL,
+};
+
+static otError provisioning_response_send(otMessage *request_message,
+					  const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
+	const void *payload;
+	uint16_t payload_size;
+
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL) {
+		goto end;
+	}
+
+	otCoapMessageInit(response, OT_COAP_TYPE_NON_CONFIRMABLE,
+			  OT_COAP_CODE_CONTENT);
+
+	error = otCoapMessageSetToken(
+		response, otCoapMessageGetToken(request_message),
+		otCoapMessageGetTokenLength(request_message));
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(response);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	payload = otThreadGetMeshLocalEid(srv_context.ot);
+	payload_size = sizeof(otIp6Address);
+
+	error = otMessageAppend(response, payload, payload_size);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+
+	LOG_HEXDUMP_INF(payload, payload_size, "Sent provisioning response:");
+
+end:
+	if (error != OT_ERROR_NONE && response != NULL) {
+		otMessageFree(response);
+	}
+
+	return error;
+}
+
+otError coap_server_send_modem_update_state_response(otMessage *request_message,
+					  const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
+
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL) {
+		goto end;
+	}
+
+	error = otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
+									  OT_COAP_CODE_CHANGED);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+
+end:
+	if (error != OT_ERROR_NONE && response != NULL) {
+		otMessageFree(response);
+	}
+
+	return error;
+}
+
+void handle_modem_update_state_response(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
+{
+	char string[OT_IP6_ADDRESS_STRING_SIZE], string2[OT_IP6_ADDRESS_STRING_SIZE];
+
+	LOG_INF("Modem response received");
+
+	otIp6AddressToString(&(message_info->mPeerAddr), string, sizeof(string));
+	otIp6AddressToString(&(message_info->mSockAddr), string2, sizeof(string2));
+
+	LOG_HEXDUMP_INF(string, strlen(string), "modem response from ");
+	LOG_HEXDUMP_INF(string2, strlen(string2), "modem request to ");
+}
+
+otError coap_client_send_modem_update_state(const otMessageInfo *message_info,
+					  uint8_t modem_state)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *message;
+	char uri[] = "modem";
+
+	message = otCoapNewMessage(srv_context.ot, NULL);
+	if (message == NULL) {
+		goto end;
+	}
+
+	otCoapMessageInit(message, OT_COAP_TYPE_CONFIRMABLE,
+			  OT_COAP_CODE_PUT);
+	otCoapMessageGenerateToken(message, OT_COAP_DEFAULT_TOKEN_LENGTH);
+	error = otCoapMessageAppendUriPathOptions(message, uri);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(message);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otMessageAppend(message, &modem_state, sizeof(modem_state));
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapSendRequest(srv_context.ot, message, message_info, &handle_modem_update_state_response, NULL);
+	LOG_INF("Sent modem state: %d", modem_state);
+
+end:
+	if (error != OT_ERROR_NONE && message != NULL) {
+		LOG_ERR("Failed to send modem state: %d", error);
+		otMessageFree(message);
+	}
+
+	return error;
+}
 
 static bool is_mtd_in_med_mode(otInstance *instance)
 {
@@ -103,92 +259,20 @@ static void poll_period_restore(void)
 	}
 }
 
-static int on_provisioning_reply(const struct coap_packet *response,
-				 struct coap_reply *reply,
-				 const struct sockaddr *from)
-{
-	int ret = 0;
-	const uint8_t *payload;
-	uint16_t payload_size = 0u;
-
-	ARG_UNUSED(reply);
-	ARG_UNUSED(from);
-
-	payload = coap_packet_get_payload(response, &payload_size);
-
-	if (payload == NULL ||
-	    payload_size != sizeof(unique_local_addr.sin6_addr)) {
-		LOG_ERR("Received data is invalid");
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	memcpy(&unique_local_addr.sin6_addr, payload, payload_size);
-
-	if (!inet_ntop(AF_INET6, payload, unique_local_addr_str,
-		       INET6_ADDRSTRLEN)) {
-		LOG_ERR("Received data is not IPv6 address: %d", errno);
-		ret = -errno;
-		goto exit;
-	}
-
-	LOG_INF("Received peer address: %s", unique_local_addr_str);
-
-exit:
-	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
-		poll_period_restore();
-	}
-
-	return ret;
-}
-
-static void toggle_one_light(struct k_work *item)
-{
-	uint8_t payload = (uint8_t)THREAD_COAP_UTILS_LIGHT_CMD_TOGGLE;
-
-	ARG_UNUSED(item);
-
-	if (unique_local_addr.sin6_addr.s6_addr16[0] == 0) {
-		LOG_WRN("Peer address not set. Activate 'provisioning' option "
-			"on the server side");
-		return;
-	}
-
-	LOG_INF("Send 'light' request to: %s", unique_local_addr_str);
-	coap_send_request(COAP_METHOD_PUT,
-			  (const struct sockaddr *)&unique_local_addr,
-			  light_option, &payload, sizeof(payload), NULL);
-}
-
-static void toggle_mesh_lights(struct k_work *item)
-{
-	static uint8_t command = (uint8_t)THREAD_COAP_UTILS_LIGHT_CMD_OFF;
-
-	ARG_UNUSED(item);
-
-	command = ((command == THREAD_COAP_UTILS_LIGHT_CMD_OFF) ?
-			   THREAD_COAP_UTILS_LIGHT_CMD_ON :
-			   THREAD_COAP_UTILS_LIGHT_CMD_OFF);
-
-	LOG_INF("Send multicast mesh 'light' request");
-	coap_send_request(COAP_METHOD_PUT,
-			  (const struct sockaddr *)&multicast_local_addr,
-			  light_option, &command, sizeof(command), NULL);
-}
-
-static void send_provisioning_request(struct k_work *item)
+static void send_modem_discover_request(struct k_work *item)
 {
 	ARG_UNUSED(item);
+	uint8_t command = (uint8_t)THREAD_COAP_UTILS_MODEM_CMD_DISCOVER;
 
 	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
 		/* decrease the polling period for higher responsiveness */
 		poll_period_response_set();
 	}
 
-	LOG_INF("Send 'provisioning' request");
-	coap_send_request(COAP_METHOD_GET,
+	LOG_INF("Send 'discover' request");
+	coap_send_request(COAP_METHOD_PUT,
 			  (const struct sockaddr *)&multicast_local_addr,
-			  provisioning_option, NULL, 0u, on_provisioning_reply);
+			  modem_option, &command, sizeof(command), NULL);
 }
 
 static void toggle_minimal_sleepy_end_device(struct k_work *item)
@@ -270,9 +354,7 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 
 	k_work_init(&on_connect_work, on_connect);
 	k_work_init(&on_disconnect_work, on_disconnect);
-	k_work_init(&unicast_light_work, toggle_one_light);
-	k_work_init(&multicast_light_work, toggle_mesh_lights);
-	k_work_init(&provisioning_work, send_provisioning_request);
+	k_work_init(&modem_discover_work, send_modem_discover_request);
 
 	openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
 	openthread_start(openthread_get_default_context());
@@ -284,19 +366,9 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 	}
 }
 
-void coap_client_toggle_one_light(void)
+void coap_client_send_modem_discover_request(void)
 {
-	submit_work_if_connected(&unicast_light_work);
-}
-
-void coap_client_toggle_mesh_lights(void)
-{
-	submit_work_if_connected(&multicast_light_work);
-}
-
-void coap_client_send_provisioning_request(void)
-{
-	submit_work_if_connected(&provisioning_work);
+	submit_work_if_connected(&modem_discover_work);
 }
 
 void coap_client_toggle_minimal_sleepy_end_device(void)
@@ -304,4 +376,107 @@ void coap_client_toggle_minimal_sleepy_end_device(void)
 	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
 		k_work_submit_to_queue(&coap_client_workq, &toggle_MTD_SED_work);
 	}
+}
+
+static void provisioning_request_handler(void *context, otMessage *message,
+					 const otMessageInfo *message_info)
+{
+	otError error;
+	otMessageInfo msg_info;
+
+	ARG_UNUSED(context);
+#if 0
+	if (!srv_context.provisioning_enabled) {
+		LOG_WRN("Received provisioning request but provisioning "
+			"is disabled");
+		return;
+	}
+#endif
+	LOG_INF("Received provisioning request");
+
+	if ((otCoapMessageGetType(message) == OT_COAP_TYPE_NON_CONFIRMABLE) &&
+	    (otCoapMessageGetCode(message) == OT_COAP_CODE_GET)) {
+		msg_info = *message_info;
+		memset(&msg_info.mSockAddr, 0, sizeof(msg_info.mSockAddr));
+
+		srv_context.on_provisioning_request();
+
+		error = provisioning_response_send(message, &msg_info);
+		if (error == OT_ERROR_NONE) {
+			//srv_context.on_provisioning_request();
+			srv_context.provisioning_enabled = false;
+		}
+	}
+}
+
+static void modem_request_handler(void *context, otMessage *message,
+				  const otMessageInfo *message_info)
+{
+	ARG_UNUSED(context);
+	static uint16_t message_id;
+
+	if (otIp6IsAddressEqual(&(message_info->mPeerAddr), otThreadGetMeshLocalEid(srv_context.ot))) {
+		LOG_WRN("Received message from itself");
+		return;
+	}
+
+	if (otCoapMessageGetMessageId(message) == message_id) {
+		LOG_WRN("Received the same message id");
+		return;
+	}
+	message_id = otCoapMessageGetMessageId(message);
+
+	if (otCoapMessageGetCode(message) != OT_COAP_CODE_PUT) {
+		LOG_ERR("Modem handler - Unexpected CoAP code");
+		return;
+	}
+
+	srv_context.on_modem_request(message, message_info);
+}
+
+static void coap_default_handler(void *context, otMessage *message,
+				 const otMessageInfo *message_info)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(message);
+	ARG_UNUSED(message_info);
+
+	LOG_INF("Received CoAP message that does not match any request "
+		"or resource");
+}
+
+int ot_coap_init(provisioning_request_callback_t on_provisioning_request,
+                 modem_request_callback_t on_modem_request)
+{
+	otError error;
+
+	srv_context.provisioning_enabled = true;
+	srv_context.on_provisioning_request = on_provisioning_request;
+	srv_context.on_modem_request = on_modem_request;
+
+	srv_context.ot = openthread_get_default_instance();
+	if (!srv_context.ot) {
+		LOG_ERR("There is no valid OpenThread instance");
+		error = OT_ERROR_FAILED;
+		goto end;
+	}
+
+	provisioning_resource.mContext = srv_context.ot;
+	provisioning_resource.mHandler = provisioning_request_handler;
+
+	modem_resource.mContext = srv_context.ot;
+	modem_resource.mHandler = modem_request_handler;
+
+	otCoapSetDefaultHandler(srv_context.ot, coap_default_handler, NULL);
+	otCoapAddResource(srv_context.ot, &modem_resource);
+	otCoapAddResource(srv_context.ot, &provisioning_resource);
+
+	error = otCoapStart(srv_context.ot, COAP_PORT);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Failed to start OT CoAP. Error: %d", error);
+		goto end;
+	}
+
+end:
+	return error == OT_ERROR_NONE ? 0 : 1;
 }

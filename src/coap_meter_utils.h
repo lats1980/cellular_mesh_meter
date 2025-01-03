@@ -13,6 +13,11 @@
 #ifndef __COAP_METER_UTILS_H__
 #define __COAP_METER_UTILS_H__
 
+#include <openthread/coap.h>
+#include <openthread/ip6.h>
+#include <openthread/message.h>
+#include <openthread/thread.h>
+
 /** @brief Type indicates function called when OpenThread connection
  *         is established.
  *
@@ -39,27 +44,47 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 			    ot_disconnection_cb_t on_disconnect,
 				mtd_mode_toggle_cb_t on_toggle);
 
-/** @brief Toggle light on the CoAP server node.
- *
- * @note The CoAP server should be paired before to have an affect.
+/**
+ * @brief Send CoAP request to update modem state.
  */
-void coap_client_toggle_one_light(void);
+otError coap_client_send_modem_update_state(const otMessageInfo *message_info,
+					  uint8_t modem_state);
 
-/** @brief Toggle lights on all CoAP servers in the network mesh.
+/**
+ * @brief Send CoAP response to modem update state request.
  */
-void coap_client_toggle_mesh_lights(void);
+otError coap_server_send_modem_update_state_response(otMessage *request_message,
+					  const otMessageInfo *message_info);
 
-/** @brief Request for the CoAP server address to pair.
+/** @brief Multicast request to discover available modems.
  *
- * @note Enable paring on the CoAP server to get the address.
+ * @note CoAP server with available modem will send Update State request back.
  */
-void coap_client_send_provisioning_request(void);
+void coap_client_send_modem_discover_request(void);
 
 /** @brief Toggle SED to MED and MED to SED modes.
  *
  * @note Active when the device is working as Minimal Thread Device.
  */
 void coap_client_toggle_minimal_sleepy_end_device(void);
+
+#define COAP_PORT OT_DEFAULT_COAP_PORT
+#define PROVISIONING_URI_PATH "provisioning"
+#define MODEM_URI_PATH "modem"
+
+/**@brief Enumeration describing modem commands. */
+enum modem_command {
+	THREAD_COAP_UTILS_MODEM_CMD_DISCOVER,
+	THREAD_COAP_UTILS_MODEM_CMD_UPDATE_STATE_IDLE,
+	THREAD_COAP_UTILS_MODEM_CMD_UPDATE_STATE_BUSY
+};
+
+typedef void (*modem_request_callback_t)(otMessage *message,
+				  const otMessageInfo *message_info);
+typedef void (*provisioning_request_callback_t)();
+
+int ot_coap_init(provisioning_request_callback_t on_provisioning_request,
+                 modem_request_callback_t on_modem_request);
 
 #endif
 
