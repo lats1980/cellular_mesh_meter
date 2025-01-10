@@ -14,4 +14,7 @@ target_sources(app PRIVATE src/main.c
 			   src/coap_meter_utils.c)
 # NORDIC SDK APP END
 
+target_sources_ifdef(CONFIG_MODEM_UTILS_SIMULATED app PRIVATE src/modem_utils_simulated.c)
+target_sources_ifdef(CONFIG_MODEM_UTILS_SERIAL_LTE_MODEM app PRIVATE src/modem_utils_slm.c)
+
 target_sources_ifdef(CONFIG_BT_NUS app PRIVATE src/ble_utils.c)

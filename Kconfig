@@ -8,6 +8,16 @@ menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu
 
+config MODEM_UTILS_SIMULATED
+	bool "Simulated modem utilities"
+	help
+	  When enabled, the modem utilities will be simulated.
+
+config MODEM_UTILS_SERIAL_LTE_MODEM
+	bool "Serial LTE modem utilities"
+	help
+	  When enabled, the modem utilities will be using the serial LTE modem.
+
 module = CELLULAR_MESH_METER
 module-str = Cellular mesh meter
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
@@ -18,4 +28,8 @@ source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
 
 module = BLE_UTILS
 module-str = Bluetooth connection utilities
+source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+
+module = MODEM_UTILS
+module-str = Modem link utilities
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

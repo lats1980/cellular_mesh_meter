@@ -12,6 +12,7 @@
 #include <zephyr/pm/device.h>
 
 #include "coap_meter_utils.h"
+#include "modem_utils.h"
 
 #if CONFIG_BT_NUS
 #include "ble_utils.h"
@@ -25,22 +26,13 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 #define OT_CONNECTION_LED DK_LED1
 #define BLE_CONNECTION_LED DK_LED2
 #define MTD_SED_LED DK_LED3
-#define LIGHT_LED DK_LED4
+#define MODEM_LED DK_LED4
 
 #if CONFIG_BT_NUS
 
 #define COMMAND_REQUEST_UNICAST 'u'
 #define COMMAND_REQUEST_MULTICAST 'm'
 #define COMMAND_REQUEST_PROVISIONING 'p'
-
-/**@brief Enumeration describing modem state. */
-typedef enum {
-	CELLULAR_MODEM_STATE_OFF,
-	CELLULAR_MODEM_STATE_IDLE,
-	CELLULAR_MODEM_STATE_BUSY
-} cellular_modem_state;
-
-static cellular_modem_state modem_state = CELLULAR_MODEM_STATE_OFF;
 
 static void on_nus_received(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
@@ -117,22 +109,7 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
-		/* test code to change modem state
-		*/
-		if (modem_state == CELLULAR_MODEM_STATE_OFF) {
-			modem_state = CELLULAR_MODEM_STATE_IDLE;
-			dk_set_led_on(LIGHT_LED);
-			dk_set_led_on(MTD_SED_LED);
-		} else if (modem_state == CELLULAR_MODEM_STATE_IDLE) {
-			modem_state = CELLULAR_MODEM_STATE_BUSY;
-			dk_set_led_on(LIGHT_LED);
-			dk_set_led_off(MTD_SED_LED);
-		} else {
-			modem_state = CELLULAR_MODEM_STATE_OFF;
-			dk_set_led_off(LIGHT_LED);
-			dk_set_led_off(MTD_SED_LED);
-		}
-		LOG_INF("Modem state: %d", modem_state);
+		//coap_client_toggle_one_light();
 	}
 
 	if (buttons & DK_BTN2_MSK) {
@@ -152,6 +129,7 @@ static void on_modem_request(otMessage *message,
 				  const otMessageInfo *message_info)
 {
 	uint8_t command;
+	modem_state current_modem_state;
 
 	if (otMessageRead(message, otMessageGetOffset(message), &command, 1) != 1) {
 		LOG_ERR("Modem handler - Missing modem command");
@@ -165,16 +143,17 @@ static void on_modem_request(otMessage *message,
 	LOG_HEXDUMP_INF(string, strlen(string), "coap request from ");
 	LOG_HEXDUMP_INF(string2, strlen(string2), "coap request to ");
 	LOG_INF("Got command: %d", command);
+	current_modem_state = modem_get_state();
 
 	switch (command) {
 	case THREAD_COAP_UTILS_MODEM_CMD_DISCOVER:
-		if ((modem_state == CELLULAR_MODEM_STATE_IDLE ) || (modem_state == CELLULAR_MODEM_STATE_BUSY)) {
+		if ((current_modem_state == MODEM_STATE_IDLE ) || (current_modem_state == MODEM_STATE_BUSY)) {
 			otMessageInfo update_state_message_info;
 			memset(&update_state_message_info, 0, sizeof(update_state_message_info));
 			update_state_message_info.mPeerAddr = message_info->mPeerAddr;
 			update_state_message_info.mPeerPort = COAP_PORT;
-			coap_client_send_modem_update_state(&update_state_message_info, modem_state);
-		} else {	//CELLULAR_MODEM_STATE_OFF
+			coap_client_send_modem_update_state(&update_state_message_info, current_modem_state);
+		} else {	//MODEM_STATE_OFF
 			LOG_INF("Modem is off");
 		}
 		break;
@@ -185,6 +164,19 @@ static void on_modem_request(otMessage *message,
 		break;
 
 	default:
+		break;
+	}
+}
+
+static void on_modem_state_change(modem_state state)
+{
+	switch (state) {
+	case MODEM_STATE_IDLE:
+		dk_set_led_on(MODEM_LED);
+		break;
+
+	default:
+		dk_set_led_off(MODEM_LED);
 		break;
 	}
 }
@@ -271,6 +263,12 @@ int main(void)
 	}
 
 	coap_client_utils_init(on_ot_connect, on_ot_disconnect, on_mtd_mode_toggle);
+
+	ret = modem_init(on_modem_state_change);
+	if (ret) {
+		LOG_ERR("Cannot init modem (error: %d)", ret);
+		return ret;
+	}
 
 	return 0;
 }
