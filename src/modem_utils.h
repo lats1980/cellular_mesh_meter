@@ -20,4 +20,9 @@ int modem_init(modem_utils_state_handler_t handler);
  */
 modem_state modem_get_state(void);
 
+/**
+ * @brief Set modem state.
+ */
+void modem_set_state(modem_state);
+
 #endif /* __MODEM_UTILS_H__ */

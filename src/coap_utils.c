@@ -14,10 +14,6 @@
 
 LOG_MODULE_REGISTER(cellular_mesh_meter_util, CONFIG_CELLULAR_MESH_METER_UTILS_LOG_LEVEL);
 
-#define RESPONSE_POLL_PERIOD 100
-
-static uint32_t poll_period;
-
 static bool is_connected;
 
 #define COAP_WORKQ_STACK_SIZE 2048
@@ -26,12 +22,9 @@ static bool is_connected;
 K_THREAD_STACK_DEFINE(coap_client_workq_stack_area, COAP_WORKQ_STACK_SIZE);
 static struct k_work_q coap_client_workq;
 
-static struct k_work toggle_MTD_SED_work;
 static struct k_work modem_discover_work;
 static struct k_work on_connect_work;
 static struct k_work on_disconnect_work;
-
-mtd_mode_toggle_cb_t on_mtd_mode_toggle;
 
 /* Options supported by the server */
 static const char *const modem_option[] = { MODEM_URI_PATH, NULL };
@@ -161,17 +154,102 @@ end:
 	return error;
 }
 
-void handle_modem_update_state_response(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
+otError coap_utils_modem_upload_measurement_response(otMessage *request_message,
+													 const otMessageInfo *message_info,
+													 otCoapCode code)
 {
-	char string[OT_IP6_ADDRESS_STRING_SIZE], string2[OT_IP6_ADDRESS_STRING_SIZE];
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *response;
 
-	LOG_INF("Modem response received");
+	response = otCoapNewMessage(srv_context.ot, NULL);
+	if (response == NULL) {
+		goto end;
+	}
 
-	otIp6AddressToString(&(message_info->mPeerAddr), string, sizeof(string));
-	otIp6AddressToString(&(message_info->mSockAddr), string2, sizeof(string2));
+	error = otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT,
+									  code);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
 
-	LOG_HEXDUMP_INF(string, strlen(string), "modem response from ");
-	LOG_HEXDUMP_INF(string2, strlen(string2), "modem request to ");
+	error = otCoapSendResponse(srv_context.ot, response, message_info);
+end:
+	if (error != OT_ERROR_NONE && response != NULL) {
+		otMessageFree(response);
+	}
+
+	return error;
+}
+
+static void handle_report_state_response(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
+{
+    if (error != OT_ERROR_NONE)
+    {
+        LOG_ERR("report state request error %d: %s", error, otThreadErrorToString(error));
+    } else if ((message_info != NULL) && (message != NULL)) {
+		LOG_INF("report state response from ");
+		LOG_HEXDUMP_INF(message_info->mPeerAddr.mFields.m8, sizeof(message_info->mPeerAddr.mFields.m8), "peer address:");
+	}
+}
+
+static void handle_upload_measurement_response(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
+{
+    if (error != OT_ERROR_NONE)
+    {
+        LOG_ERR("report state request error %d: %s", error, otThreadErrorToString(error));
+    } else if ((message_info != NULL) && (message != NULL)) {
+		LOG_INF("upload measurement response from ");
+		LOG_HEXDUMP_INF(message_info->mPeerAddr.mFields.m8, sizeof(message_info->mPeerAddr.mFields.m8), "peer address:");
+		if (otCoapMessageGetCode(message) == OT_COAP_CODE_CHANGED) {
+			LOG_INF("Modem upload measurement success");
+		} else if (otCoapMessageGetCode(message) == OT_COAP_CODE_SERVICE_UNAVAILABLE) {
+			LOG_INF("Modem is busy, wait for next round");
+		} else {
+			LOG_ERR("Modem upload measurement failed");
+		}
+	}
+}
+
+otError coap_utils_modem_upload_measurement(const otMessageInfo *message_info)
+{
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *message;
+	char uri[] = "modem";
+	uint8_t modem_command = MODEM_COMMAND_UPLOAD_MEASUREMENT;
+
+	message = otCoapNewMessage(srv_context.ot, NULL);
+	if (message == NULL) {
+		goto end;
+	}
+
+	otCoapMessageInit(message, OT_COAP_TYPE_CONFIRMABLE,
+			  OT_COAP_CODE_PUT);
+	otCoapMessageGenerateToken(message, OT_COAP_DEFAULT_TOKEN_LENGTH);
+	error = otCoapMessageAppendUriPathOptions(message, uri);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(message);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otMessageAppend(message, &modem_command, sizeof(modem_command));
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapSendRequest(srv_context.ot, message, message_info, &handle_upload_measurement_response, NULL);
+	LOG_INF("Sent modem upload measurement");
+
+end:
+	if (error != OT_ERROR_NONE && message != NULL) {
+		LOG_ERR("Failed to send modem upload measurement: %d", error);
+		otMessageFree(message);
+	}
+
+	return error;
 }
 
 otError coap_utils_modem_report_state(const otMessageInfo *message_info,
@@ -210,7 +288,7 @@ otError coap_utils_modem_report_state(const otMessageInfo *message_info,
 		goto end;
 	}
 
-	error = otCoapSendRequest(srv_context.ot, message, message_info, &handle_modem_update_state_response, NULL);
+	error = otCoapSendRequest(srv_context.ot, message, message_info, &handle_report_state_response, NULL);
 	LOG_INF("Sent modem state: %d", modem_state);
 
 end:
@@ -222,91 +300,15 @@ end:
 	return error;
 }
 
-static bool is_mtd_in_med_mode(otInstance *instance)
-{
-	return otThreadGetLinkMode(instance).mRxOnWhenIdle;
-}
-
-static void poll_period_response_set(void)
-{
-	otError error;
-
-	otInstance *instance = openthread_get_default_instance();
-
-	if (is_mtd_in_med_mode(instance)) {
-		return;
-	}
-
-	if (!poll_period) {
-		poll_period = otLinkGetPollPeriod(instance);
-
-		error = otLinkSetPollPeriod(instance, RESPONSE_POLL_PERIOD);
-		__ASSERT(error == OT_ERROR_NONE, "Failed to set pool period");
-
-		LOG_INF("Poll Period: %dms set", RESPONSE_POLL_PERIOD);
-	}
-}
-
-static void poll_period_restore(void)
-{
-	otError error;
-	otInstance *instance = openthread_get_default_instance();
-
-	if (is_mtd_in_med_mode(instance)) {
-		return;
-	}
-
-	if (poll_period) {
-		error = otLinkSetPollPeriod(instance, poll_period);
-		__ASSERT_NO_MSG(error == OT_ERROR_NONE);
-
-		LOG_INF("Poll Period: %dms restored", poll_period);
-		poll_period = 0;
-	}
-}
-
 static void send_modem_discover_request(struct k_work *item)
 {
 	ARG_UNUSED(item);
 	uint8_t command = (uint8_t)MODEM_COMMAND_DISCOVER;
 
-	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
-		/* decrease the polling period for higher responsiveness */
-		poll_period_response_set();
-	}
-
 	LOG_INF("Send 'discover' request");
 	coap_send_request(COAP_METHOD_PUT,
 			  (const struct sockaddr *)&multicast_local_addr,
 			  modem_option, &command, sizeof(command), NULL);
-}
-
-static void toggle_minimal_sleepy_end_device(struct k_work *item)
-{
-	otError error;
-	otLinkModeConfig mode;
-	struct openthread_context *context = openthread_get_default_context();
-
-	__ASSERT_NO_MSG(context != NULL);
-
-	openthread_api_mutex_lock(context);
-	mode = otThreadGetLinkMode(context->instance);
-	mode.mRxOnWhenIdle = !mode.mRxOnWhenIdle;
-	error = otThreadSetLinkMode(context->instance, mode);
-	openthread_api_mutex_unlock(context);
-
-	if (error != OT_ERROR_NONE) {
-		LOG_ERR("Failed to set MLE link mode configuration");
-	} else {
-		on_mtd_mode_toggle(mode.mRxOnWhenIdle);
-	}
-}
-
-static void update_device_state(void)
-{
-	struct otInstance *instance = openthread_get_default_instance();
-	otLinkModeConfig mode = otThreadGetLinkMode(instance);
-	on_mtd_mode_toggle(mode.mRxOnWhenIdle);
 }
 
 static void on_thread_state_changed(otChangedFlags flags, struct openthread_context *ot_context,
@@ -344,11 +346,8 @@ static void submit_work_if_connected(struct k_work *work)
 }
 
 void coap_client_utils_init(ot_connection_cb_t on_connect,
-			    ot_disconnection_cb_t on_disconnect,
-			    mtd_mode_toggle_cb_t on_toggle)
+			    ot_disconnection_cb_t on_disconnect)
 {
-	on_mtd_mode_toggle = on_toggle;
-
 	coap_init(AF_INET6, NULL);
 
 
@@ -364,24 +363,11 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 
 	openthread_state_changed_cb_register(openthread_get_default_context(), &ot_state_chaged_cb);
 	openthread_start(openthread_get_default_context());
-
-	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
-		k_work_init(&toggle_MTD_SED_work,
-			    toggle_minimal_sleepy_end_device);
-		update_device_state();
-	}
 }
 
 void coap_utils_modem_discover(void)
 {
 	submit_work_if_connected(&modem_discover_work);
-}
-
-void coap_client_toggle_minimal_sleepy_end_device(void)
-{
-	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
-		k_work_submit_to_queue(&coap_client_workq, &toggle_MTD_SED_work);
-	}
 }
 
 static void provisioning_request_handler(void *context, otMessage *message,

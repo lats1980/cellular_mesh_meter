@@ -91,3 +91,9 @@ modem_state modem_get_state(void)
 {
     return current_modem_state;
 }
+
+void modem_set_state(modem_state state)
+{
+    current_modem_state = state;
+    state_handler(current_modem_state);
+}

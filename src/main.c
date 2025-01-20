@@ -23,10 +23,12 @@
 
 LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
-#define OT_CONNECTION_LED DK_LED1
-#define BLE_CONNECTION_LED DK_LED2
-#define MTD_SED_LED DK_LED3
-#define MODEM_LED DK_LED4
+#define OT_CONNECTION_LED	DK_LED1
+#define BLE_CONNECTION_LED	DK_LED2
+#define MODEM_IDLE_LED		DK_LED3
+#define MODEM_BUSY_LED		DK_LED4
+
+static bool uploading_measurement = false;
 
 #if CONFIG_BT_NUS
 
@@ -83,29 +85,13 @@ static void on_ot_disconnect(struct k_work *item)
 	dk_set_led_off(OT_CONNECTION_LED);
 }
 
-static void on_mtd_mode_toggle(uint32_t med)
-{
-#if IS_ENABLED(CONFIG_PM_DEVICE)
-	const struct device *cons = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
-
-	if (!device_is_ready(cons)) {
-		return;
-	}
-
-	if (med) {
-		pm_device_action_run(cons, PM_DEVICE_ACTION_RESUME);
-	} else {
-		pm_device_action_run(cons, PM_DEVICE_ACTION_SUSPEND);
-	}
-#endif
-	dk_set_led(MTD_SED_LED, med);
-}
-
 static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 {
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
+		//TODO: reset uploading_measurement flag when uploading is done or timeout
+		uploading_measurement = false;
 		coap_utils_modem_discover();
 	}
 
@@ -113,7 +99,6 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	}
 
 	if (buttons & DK_BTN3_MSK) {
-		coap_client_toggle_minimal_sleepy_end_device();
 	}
 
 	if (buttons & DK_BTN4_MSK) {
@@ -124,41 +109,66 @@ static void on_modem_request(otMessage *message,
 				  const otMessageInfo *message_info)
 {
 	uint8_t command;
+	modem_state current_modem_state = MODEM_STATE_OFF, remote_modem_state = MODEM_STATE_OFF;
 
-	if (otMessageRead(message, otMessageGetOffset(message), &command, 1) != 1) {
+	current_modem_state = modem_get_state();
+
+	if (otMessageRead(message, otMessageGetOffset(message), &command,
+		sizeof(command)) != sizeof(command)) {
 		LOG_ERR("Modem handler - Missing modem command");
 	}
 
-	char string[OT_IP6_ADDRESS_STRING_SIZE], string2[OT_IP6_ADDRESS_STRING_SIZE];
+	char ip_addr_from[OT_IP6_ADDRESS_STRING_SIZE], ip_addr_to[OT_IP6_ADDRESS_STRING_SIZE];
 
-	otIp6AddressToString(&(message_info->mPeerAddr), string, sizeof(string));
-	otIp6AddressToString(&(message_info->mSockAddr), string2, sizeof(string2));
+	otIp6AddressToString(&(message_info->mPeerAddr), ip_addr_from, sizeof(ip_addr_from));
+	otIp6AddressToString(&(message_info->mSockAddr), ip_addr_to, sizeof(ip_addr_to));
 
-	LOG_HEXDUMP_INF(string, strlen(string), "coap request from ");
-	LOG_HEXDUMP_INF(string2, strlen(string2), "coap request to ");
+	LOG_HEXDUMP_INF(ip_addr_from, strlen(ip_addr_from), "coap request from ");
+	LOG_HEXDUMP_INF(ip_addr_to, strlen(ip_addr_to), "coap request to ");
 	LOG_INF("Got command: %d", command);
 
 	switch (command) {
-		modem_state current_modem_state, remote_modem_state;
 	case MODEM_COMMAND_DISCOVER:
-		current_modem_state = modem_get_state();
 		if ((current_modem_state == MODEM_STATE_IDLE ) || (current_modem_state == MODEM_STATE_BUSY)) {
-			otMessageInfo update_state_message_info;
-			memset(&update_state_message_info, 0, sizeof(update_state_message_info));
-			update_state_message_info.mPeerAddr = message_info->mPeerAddr;
-			update_state_message_info.mPeerPort = COAP_PORT;
-			coap_utils_modem_report_state(&update_state_message_info, current_modem_state);
+			otMessageInfo report_state_message_info;
+			memset(&report_state_message_info, 0, sizeof(report_state_message_info));
+			report_state_message_info.mPeerAddr = message_info->mPeerAddr;
+			report_state_message_info.mPeerPort = COAP_PORT;
+			coap_utils_modem_report_state(&report_state_message_info, current_modem_state);
 		} else {	//MODEM_STATE_OFF
 			LOG_INF("Modem is off");
 		}
 		break;
 
 	case MODEM_COMMAND_REPORT_STATE:
-		if (otMessageRead(message, otMessageGetOffset(message) + sizeof(command), &remote_modem_state, 1) != 1) {
+		if (otMessageRead(message, otMessageGetOffset(message) + sizeof(command),
+			&remote_modem_state, sizeof(remote_modem_state)) != sizeof(remote_modem_state)) {
 			LOG_ERR("Missing modem state of the remote modem");
 		} else {
 			LOG_INF("Remote modem state: %d", remote_modem_state);
 			coap_utils_modem_report_state_response(message, message_info);
+			if ((remote_modem_state == MODEM_STATE_IDLE) && (uploading_measurement == false)) {
+				//send modem upload measurement
+				otMessageInfo upload_measurement_message_info;
+
+				uploading_measurement = true;
+				memset(&upload_measurement_message_info, 0, sizeof(upload_measurement_message_info));
+				upload_measurement_message_info.mPeerAddr = message_info->mPeerAddr;
+				upload_measurement_message_info.mPeerPort = COAP_PORT;
+				coap_utils_modem_upload_measurement(&upload_measurement_message_info);
+			}
+		}
+		break;
+
+	case MODEM_COMMAND_UPLOAD_MEASUREMENT:
+		LOG_INF("Receive Upload Measurement command");
+		if (current_modem_state == MODEM_STATE_IDLE) {
+			LOG_INF("Modem is idle, start uploading measurement");
+			modem_set_state(MODEM_STATE_BUSY);
+			coap_utils_modem_upload_measurement_response(message, message_info, OT_COAP_CODE_CHANGED);
+		} else {
+			LOG_INF("Modem is busy, wait for next round");
+			coap_utils_modem_upload_measurement_response(message, message_info, OT_COAP_CODE_SERVICE_UNAVAILABLE);
 		}
 		break;
 
@@ -169,13 +179,18 @@ static void on_modem_request(otMessage *message,
 
 static void on_modem_state_change(modem_state state)
 {
+	dk_set_led_off(MODEM_IDLE_LED);
+	dk_set_led_off(MODEM_BUSY_LED);
+
 	switch (state) {
 	case MODEM_STATE_IDLE:
-		dk_set_led_on(MODEM_LED);
+		dk_set_led_on(MODEM_IDLE_LED);
 		break;
 
+	case MODEM_STATE_BUSY:
+		dk_set_led_on(MODEM_BUSY_LED);
+		break;
 	default:
-		dk_set_led_off(MODEM_LED);
 		break;
 	}
 }
@@ -261,7 +276,7 @@ int main(void)
 		LOG_ERR("Could not initialize OpenThread CoAP");
 	}
 
-	coap_client_utils_init(on_ot_connect, on_ot_disconnect, on_mtd_mode_toggle);
+	coap_client_utils_init(on_ot_connect, on_ot_disconnect);
 
 	ret = modem_init(on_modem_state_change);
 	if (ret) {

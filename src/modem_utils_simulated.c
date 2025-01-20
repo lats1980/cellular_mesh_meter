@@ -23,6 +23,12 @@ modem_state modem_get_state(void)
     return current_modem_state;
 }
 
+void modem_set_state(modem_state state)
+{
+    current_modem_state = state;
+    state_handler(current_modem_state);
+}
+
 static int cmd_state(const struct shell *shell, size_t argc, char **argv)
 {
 	if (argc < 2) {
