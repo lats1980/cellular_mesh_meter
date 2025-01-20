@@ -11,7 +11,7 @@ project(openthread_cellular_mesh_meter)
 
 # NORDIC SDK APP START
 target_sources(app PRIVATE src/main.c
-			   src/coap_meter_utils.c)
+			   src/coap_utils.c)
 # NORDIC SDK APP END
 
 target_sources_ifdef(CONFIG_MODEM_UTILS_SIMULATED app PRIVATE src/modem_utils_simulated.c)

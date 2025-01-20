@@ -10,7 +10,7 @@
 #include <zephyr/net/openthread.h>
 #include <zephyr/net/socket.h>
 
-#include "coap_meter_utils.h"
+#include "coap_utils.h"
 
 LOG_MODULE_REGISTER(cellular_mesh_meter_util, CONFIG_CELLULAR_MESH_METER_UTILS_LOG_LEVEL);
 
@@ -134,7 +134,7 @@ end:
 	return error;
 }
 
-otError coap_server_send_modem_update_state_response(otMessage *request_message,
+otError coap_utils_modem_report_state_response(otMessage *request_message,
 					  const otMessageInfo *message_info)
 {
 	otError error = OT_ERROR_NO_BUFS;
@@ -174,12 +174,13 @@ void handle_modem_update_state_response(void *context, otMessage *message, const
 	LOG_HEXDUMP_INF(string2, strlen(string2), "modem request to ");
 }
 
-otError coap_client_send_modem_update_state(const otMessageInfo *message_info,
+otError coap_utils_modem_report_state(const otMessageInfo *message_info,
 					  uint8_t modem_state)
 {
 	otError error = OT_ERROR_NO_BUFS;
 	otMessage *message;
 	char uri[] = "modem";
+	uint8_t modem_command = MODEM_COMMAND_REPORT_STATE;
 
 	message = otCoapNewMessage(srv_context.ot, NULL);
 	if (message == NULL) {
@@ -195,6 +196,11 @@ otError coap_client_send_modem_update_state(const otMessageInfo *message_info,
 	}
 
 	error = otCoapMessageSetPayloadMarker(message);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otMessageAppend(message, &modem_command, sizeof(modem_command));
 	if (error != OT_ERROR_NONE) {
 		goto end;
 	}
@@ -262,7 +268,7 @@ static void poll_period_restore(void)
 static void send_modem_discover_request(struct k_work *item)
 {
 	ARG_UNUSED(item);
-	uint8_t command = (uint8_t)THREAD_COAP_UTILS_MODEM_CMD_DISCOVER;
+	uint8_t command = (uint8_t)MODEM_COMMAND_DISCOVER;
 
 	if (IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED)) {
 		/* decrease the polling period for higher responsiveness */
@@ -366,7 +372,7 @@ void coap_client_utils_init(ot_connection_cb_t on_connect,
 	}
 }
 
-void coap_client_send_modem_discover_request(void)
+void coap_utils_modem_discover(void)
 {
 	submit_work_if_connected(&modem_discover_work);
 }

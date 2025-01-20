@@ -11,7 +11,7 @@
 #include <zephyr/device.h>
 #include <zephyr/pm/device.h>
 
-#include "coap_meter_utils.h"
+#include "coap_utils.h"
 #include "modem_utils.h"
 
 #if CONFIG_BT_NUS
@@ -40,15 +40,12 @@ static void on_nus_received(struct bt_conn *conn, const uint8_t *const data, uin
 
 	switch (*data) {
 	case COMMAND_REQUEST_UNICAST:
-		//coap_client_toggle_one_light();
 		break;
 
 	case COMMAND_REQUEST_MULTICAST:
-		//coap_client_toggle_mesh_lights();
 		break;
 
 	case COMMAND_REQUEST_PROVISIONING:
-		coap_client_send_modem_discover_request();
 		break;
 
 	default:
@@ -109,11 +106,10 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
-		//coap_client_toggle_one_light();
+		coap_utils_modem_discover();
 	}
 
 	if (buttons & DK_BTN2_MSK) {
-		//coap_client_toggle_mesh_lights();
 	}
 
 	if (buttons & DK_BTN3_MSK) {
@@ -121,7 +117,6 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	}
 
 	if (buttons & DK_BTN4_MSK) {
-		coap_client_send_modem_discover_request();
 	}
 }
 
@@ -129,7 +124,6 @@ static void on_modem_request(otMessage *message,
 				  const otMessageInfo *message_info)
 {
 	uint8_t command;
-	modem_state current_modem_state;
 
 	if (otMessageRead(message, otMessageGetOffset(message), &command, 1) != 1) {
 		LOG_ERR("Modem handler - Missing modem command");
@@ -143,24 +137,29 @@ static void on_modem_request(otMessage *message,
 	LOG_HEXDUMP_INF(string, strlen(string), "coap request from ");
 	LOG_HEXDUMP_INF(string2, strlen(string2), "coap request to ");
 	LOG_INF("Got command: %d", command);
-	current_modem_state = modem_get_state();
 
 	switch (command) {
-	case THREAD_COAP_UTILS_MODEM_CMD_DISCOVER:
+		modem_state current_modem_state, remote_modem_state;
+	case MODEM_COMMAND_DISCOVER:
+		current_modem_state = modem_get_state();
 		if ((current_modem_state == MODEM_STATE_IDLE ) || (current_modem_state == MODEM_STATE_BUSY)) {
 			otMessageInfo update_state_message_info;
 			memset(&update_state_message_info, 0, sizeof(update_state_message_info));
 			update_state_message_info.mPeerAddr = message_info->mPeerAddr;
 			update_state_message_info.mPeerPort = COAP_PORT;
-			coap_client_send_modem_update_state(&update_state_message_info, current_modem_state);
+			coap_utils_modem_report_state(&update_state_message_info, current_modem_state);
 		} else {	//MODEM_STATE_OFF
 			LOG_INF("Modem is off");
 		}
 		break;
 
-	case THREAD_COAP_UTILS_MODEM_CMD_UPDATE_STATE_IDLE:
-	case THREAD_COAP_UTILS_MODEM_CMD_UPDATE_STATE_BUSY:
-		coap_server_send_modem_update_state_response(message, message_info);
+	case MODEM_COMMAND_REPORT_STATE:
+		if (otMessageRead(message, otMessageGetOffset(message) + sizeof(command), &remote_modem_state, 1) != 1) {
+			LOG_ERR("Missing modem state of the remote modem");
+		} else {
+			LOG_INF("Remote modem state: %d", remote_modem_state);
+			coap_utils_modem_report_state_response(message, message_info);
+		}
 		break;
 
 	default:
