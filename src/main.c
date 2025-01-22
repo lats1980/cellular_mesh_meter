@@ -21,6 +21,8 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/usb/usb_device.h>
 
+#include <openthread/random_noncrypto.h>
+
 LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
 #define OT_CONNECTION_LED	DK_LED1
@@ -29,6 +31,7 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 #define MODEM_BUSY_LED		DK_LED4
 
 static bool uploading_measurement = false;
+static uint32_t mBlockCount = 100;//test block size
 
 #if CONFIG_BT_NUS
 
@@ -105,8 +108,7 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	}
 }
 
-static void on_modem_request(otMessage *message,
-				  const otMessageInfo *message_info)
+static void on_modem_request(otMessage *message, const otMessageInfo *message_info)
 {
 	uint8_t command;
 	modem_state current_modem_state = MODEM_STATE_OFF, remote_modem_state = MODEM_STATE_OFF;
@@ -165,15 +167,71 @@ static void on_modem_request(otMessage *message,
 		if (current_modem_state == MODEM_STATE_IDLE) {
 			LOG_INF("Modem is idle, start uploading measurement");
 			modem_set_state(MODEM_STATE_BUSY);
-			coap_utils_modem_upload_measurement_response(message, message_info, OT_COAP_CODE_CHANGED);
+			//TODO: enable meter server and record the peer ip address
+			coap_utils_send_response(message, message_info, OT_COAP_CODE_CHANGED);
 		} else {
 			LOG_INF("Modem is busy, wait for next round");
-			coap_utils_modem_upload_measurement_response(message, message_info, OT_COAP_CODE_SERVICE_UNAVAILABLE);
+			coap_utils_send_response(message, message_info, OT_COAP_CODE_SERVICE_UNAVAILABLE);
 		}
 		break;
 
 	default:
 		break;
+	}
+}
+
+static void on_meter_block_tx(void *context,
+							  uint8_t *block,
+							  uint32_t position,
+							  uint16_t *block_length,
+							  bool *more)
+{
+	static uint32_t block_count = 0;
+	ARG_UNUSED(position);
+
+	// Send a random payload
+	otRandomNonCryptoFillBuffer(block, *block_length);
+
+	LOG_INF("send block: Num %i Len %i", block_count, *block_length);
+#if 0
+	for (uint16_t i = 0; i < *block_length / 16; i++)
+	{
+		//OutputBytesLine(&block[i * 16], 16);
+		LOG_HEXDUMP_INF(&block[i * 16], 16, "Sent block:");
+	}
+#endif
+	if (block_count == mBlockCount - 1)
+	{
+		block_count = 0;
+		*more     = false;
+	}
+	else
+	{
+		*more = true;
+		block_count++;
+	}
+}
+
+static void on_meter_block_rx(void *context,
+							  const uint8_t *block,
+							  uint32_t position,
+							  uint16_t block_length,
+							  bool more,
+							  uint32_t total_length)
+{
+	ARG_UNUSED(total_length);
+
+	LOG_INF("received block: Num %i Len %i more: %d", position / block_length, block_length, more);
+#if 0
+	for (uint16_t i = 0; i < block_length / 16; i++)
+	{
+		//OutputBytesLine(&block[i * 16], 16);
+		LOG_HEXDUMP_INF(&block[i * 16], 16, "Received block:");
+	}
+#endif
+	if (more == false) {
+		LOG_INF("Received all blocks");
+		modem_set_state(MODEM_STATE_IDLE);
 	}
 }
 
@@ -193,11 +251,6 @@ static void on_modem_state_change(modem_state state)
 	default:
 		break;
 	}
-}
-
-static void deactivate_provisionig(void)
-{
-	LOG_INF("Provisioning deactivated");
 }
 
 int main(void)
@@ -271,7 +324,7 @@ int main(void)
 	(void)uart_line_ctrl_set(dev, UART_LINE_CTRL_DSR, 1);
 #endif
 
-	ret = ot_coap_init(&deactivate_provisionig, &on_modem_request);
+	ret = ot_coap_init(&on_modem_request, &on_meter_block_tx, &on_meter_block_rx);
 	if (ret) {
 		LOG_ERR("Could not initialize OpenThread CoAP");
 	}

@@ -19,7 +19,7 @@
 #include <openthread/thread.h>
 
 #define COAP_PORT OT_DEFAULT_COAP_PORT
-#define PROVISIONING_URI_PATH "provisioning"
+#define METER_URI_PATH "meter"
 #define MODEM_URI_PATH "modem"
 
 /**@brief Enumeration describing modem commands. */
@@ -71,18 +71,43 @@ otError coap_utils_modem_report_state_response(otMessage *request_message,
 otError coap_utils_modem_upload_measurement(const otMessageInfo *message_info);
 
 /**
- * @brief Send CoAP response to modem upload measurement request.
+ * @brief Send CoAP response with given response code.
  */
-otError coap_utils_modem_upload_measurement_response(otMessage *request_message,
-													 const otMessageInfo *message_info,
-													 otCoapCode code);
+otError coap_utils_send_response(otMessage *request_message,
+								 const otMessageInfo *message_info,
+								 otCoapCode code);
 
+/**
+ * @brief Callback function for modem request.
+ */
 typedef void (*modem_request_callback_t)(otMessage *message,
-				  const otMessageInfo *message_info);
-typedef void (*provisioning_request_callback_t)();
+										 const otMessageInfo *message_info);
 
-int ot_coap_init(provisioning_request_callback_t on_provisioning_request,
-                 modem_request_callback_t on_modem_request);
+/**
+ * @brief Callback function for meter block transmission.
+ */
+typedef void (*meter_block_tx_callback_t)(void     *aContext,
+										  uint8_t  *aBlock,
+										  uint32_t  aPosition,
+										  uint16_t *aBlockLength,
+										  bool     *aMore);
+
+/**
+ * @brief Callback function for meter block reception.
+ */
+typedef void (*meter_block_rx_callback_t)(void *aContext,
+										  const uint8_t *aBlock,
+										  uint32_t aPosition,
+										  uint16_t aBlockLength,
+										  bool aMore,
+										  uint32_t aTotalLength);
+
+/**
+ * @brief Initialize CoAP server utilities.
+ */
+int ot_coap_init(modem_request_callback_t on_modem_request,
+				 meter_block_tx_callback_t on_meter_block_tx,
+				 meter_block_rx_callback_t on_meter_block_rx);
 
 #endif
 
