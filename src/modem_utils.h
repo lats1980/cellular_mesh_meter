@@ -25,4 +25,11 @@ modem_state modem_get_state(void);
  */
 void modem_set_state(modem_state);
 
+/**
+ * @brief Initialize modem cloud connection.
+ */
+int modem_cloud_connect(void);
+
+int modem_cloud_upload_data(uint8_t *data, size_t size);
+
 #endif /* __MODEM_UTILS_H__ */

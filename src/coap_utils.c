@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <net/coap_utils.h>
 #include <zephyr/logging/log.h>
@@ -295,8 +296,7 @@ static otError meter_block_rx_hook(void *context,
 								   bool more,
 								   uint32_t total_length)
 {
-	srv_context.on_meter_block_rx(context, block, position, block_length, more, total_length);
-	return OT_ERROR_NONE;
+	return srv_context.on_meter_block_rx(context, block, position, block_length, more, total_length);
 }
 
 static void send_meter_upload_request(struct k_work *item)
@@ -318,7 +318,7 @@ static void send_meter_upload_request(struct k_work *item)
 	if (error != OT_ERROR_NONE) {
 		goto end;
 	}
-	error = otCoapMessageAppendBlock1Option(message, 0, true, OT_COAP_OPTION_BLOCK_SZX_128);
+	error = otCoapMessageAppendBlock1Option(message, 0, true, OT_COAP_OPTION_BLOCK_SZX_512);
 	if (error != OT_ERROR_NONE) {
 		goto end;
 	}

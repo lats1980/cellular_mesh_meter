@@ -21,8 +21,6 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/usb/usb_device.h>
 
-#include <openthread/random_noncrypto.h>
-
 LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
 #define OT_CONNECTION_LED	DK_LED1
@@ -31,7 +29,7 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 #define MODEM_BUSY_LED		DK_LED4
 
 static bool uploading_measurement = false;
-static uint32_t mBlockCount = 100;//test block size
+static uint32_t mBlockCount = 20;//test block size
 
 #if CONFIG_BT_NUS
 
@@ -150,7 +148,6 @@ static void on_modem_request(otMessage *message, const otMessageInfo *message_in
 			LOG_INF("Remote modem state: %d", remote_modem_state);
 			coap_utils_modem_report_state_response(message, message_info);
 			if ((remote_modem_state == MODEM_STATE_IDLE) && (uploading_measurement == false)) {
-				//send modem upload measurement
 				otMessageInfo upload_measurement_message_info;
 
 				uploading_measurement = true;
@@ -167,7 +164,6 @@ static void on_modem_request(otMessage *message, const otMessageInfo *message_in
 		if (current_modem_state == MODEM_STATE_IDLE) {
 			LOG_INF("Modem is idle, start uploading measurement");
 			modem_set_state(MODEM_STATE_BUSY);
-			//TODO: enable meter server and record the peer ip address
 			coap_utils_send_response(message, message_info, OT_COAP_CODE_CHANGED);
 		} else {
 			LOG_INF("Modem is busy, wait for next round");
@@ -189,17 +185,12 @@ static void on_meter_block_tx(void *context,
 	static uint32_t block_count = 0;
 	ARG_UNUSED(position);
 
-	// Send a random payload
-	otRandomNonCryptoFillBuffer(block, *block_length);
-
-	LOG_INF("send block: Num %i Len %i", block_count, *block_length);
-#if 0
-	for (uint16_t i = 0; i < *block_length / 16; i++)
-	{
-		//OutputBytesLine(&block[i * 16], 16);
-		LOG_HEXDUMP_INF(&block[i * 16], 16, "Sent block:");
+	LOG_INF("send block: Num %i Len %i pos: %i", block_count, *block_length, position);
+	/* Fill tx block with ascii 0 ~ 9 */
+	for (uint16_t i = 0; i < *block_length; i++) {
+		block[i] = 48 + i % 10;
 	}
-#endif
+	LOG_HEXDUMP_INF(block, *block_length, "Sent block:");
 	if (block_count == mBlockCount - 1)
 	{
 		block_count = 0;
@@ -212,27 +203,37 @@ static void on_meter_block_tx(void *context,
 	}
 }
 
-static void on_meter_block_rx(void *context,
-							  const uint8_t *block,
-							  uint32_t position,
-							  uint16_t block_length,
-							  bool more,
-							  uint32_t total_length)
+static otError on_meter_block_rx(void *context,
+								 const uint8_t *block,
+								 uint32_t position,
+								 uint16_t block_length,
+								 bool more,
+								 uint32_t total_length)
 {
 	ARG_UNUSED(total_length);
+	int ret;
 
 	LOG_INF("received block: Num %i Len %i more: %d", position / block_length, block_length, more);
-#if 0
-	for (uint16_t i = 0; i < block_length / 16; i++)
-	{
-		//OutputBytesLine(&block[i * 16], 16);
-		LOG_HEXDUMP_INF(&block[i * 16], 16, "Received block:");
+	LOG_HEXDUMP_INF(block, block_length, "Received block:");
+	ret = modem_cloud_upload_data(block, block_length);
+	if (ret != 0) {
+		LOG_ERR("Fail to upload received block to cloud");
+		if (ret == -EBUSY) {
+			LOG_INF("Modem is busy, wait for next round");
+			return OT_ERROR_BUSY;
+		} else if (ret == -ENOMEM) {
+			LOG_ERR("No memory to upload data");
+			return OT_ERROR_NO_BUFS;
+		} else {
+			LOG_ERR("Fail to upload data to cloud");
+			return OT_ERROR_FAILED;
+		}
 	}
-#endif
 	if (more == false) {
 		LOG_INF("Received all blocks");
 		modem_set_state(MODEM_STATE_IDLE);
 	}
+	return OT_ERROR_NONE;
 }
 
 static void on_modem_state_change(modem_state state)

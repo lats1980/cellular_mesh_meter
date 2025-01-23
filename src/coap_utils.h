@@ -95,12 +95,12 @@ typedef void (*meter_block_tx_callback_t)(void     *aContext,
 /**
  * @brief Callback function for meter block reception.
  */
-typedef void (*meter_block_rx_callback_t)(void *aContext,
-										  const uint8_t *aBlock,
-										  uint32_t aPosition,
-										  uint16_t aBlockLength,
-										  bool aMore,
-										  uint32_t aTotalLength);
+typedef otError (*meter_block_rx_callback_t)(void *aContext,
+											 const uint8_t *aBlock,
+											 uint32_t aPosition,
+											 uint16_t aBlockLength,
+											 bool aMore,
+											 uint32_t aTotalLength);
 
 /**
  * @brief Initialize CoAP server utilities.

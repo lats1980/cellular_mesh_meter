@@ -29,6 +29,19 @@ void modem_set_state(modem_state state)
     state_handler(current_modem_state);
 }
 
+int modem_cloud_connect(void)
+{
+    return 0;
+}
+
+int modem_cloud_upload_data(uint8_t *data, size_t size)
+{
+    if (data) {
+        LOG_HEXDUMP_INF(data, size, "upload data:");
+    }
+    return 0;
+}
+
 static int cmd_state(const struct shell *shell, size_t argc, char **argv)
 {
 	if (argc < 2) {
