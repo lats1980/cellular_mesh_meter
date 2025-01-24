@@ -28,27 +28,32 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 #define MODEM_IDLE_LED		DK_LED3
 #define MODEM_BUSY_LED		DK_LED4
 
+#define DEFAULT_MEASURE_CNT 10
+
 static bool uploading_measurement = false;
-static uint32_t mBlockCount = 20;//test block size
+static uint32_t max_block_count = DEFAULT_MEASURE_CNT;
 
 #if CONFIG_BT_NUS
 
-#define COMMAND_REQUEST_UNICAST 'u'
-#define COMMAND_REQUEST_MULTICAST 'm'
-#define COMMAND_REQUEST_PROVISIONING 'p'
+#define COMMAND_UPLOAD_MEASUREMENT  'u'
+#define COMMAND_CHANGE_UPLOAD_COUNT 'c'
 
 static void on_nus_received(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
 	LOG_INF("Received data: %c", data[0]);
 
 	switch (*data) {
-	case COMMAND_REQUEST_UNICAST:
+	case COMMAND_UPLOAD_MEASUREMENT:
+		uploading_measurement = false;
+		coap_utils_modem_discover();
 		break;
-
-	case COMMAND_REQUEST_MULTICAST:
-		break;
-
-	case COMMAND_REQUEST_PROVISIONING:
+	
+	case COMMAND_CHANGE_UPLOAD_COUNT:
+		if (len > 1) {
+			max_block_count = atoi((const char *)&data[1]);
+		} else {
+			LOG_WRN("Invalid data length");
+		}
 		break;
 
 	default:
@@ -191,7 +196,7 @@ static void on_meter_block_tx(void *context,
 		block[i] = 48 + i % 10;
 	}
 	LOG_HEXDUMP_INF(block, *block_length, "Sent block:");
-	if (block_count == mBlockCount - 1)
+	if (block_count == max_block_count - 1)
 	{
 		block_count = 0;
 		*more     = false;
