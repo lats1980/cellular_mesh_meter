@@ -34,7 +34,7 @@ int modem_cloud_connect(void)
     return 0;
 }
 
-int modem_cloud_upload_data(uint8_t *data, size_t size)
+int modem_cloud_upload_data(const uint8_t *data, size_t size)
 {
     if (data) {
         LOG_HEXDUMP_INF(data, size, "upload data:");

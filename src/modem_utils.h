@@ -30,6 +30,6 @@ void modem_set_state(modem_state);
  */
 int modem_cloud_connect(void);
 
-int modem_cloud_upload_data(uint8_t *data, size_t size);
+int modem_cloud_upload_data(const uint8_t *data, size_t size);
 
 #endif /* __MODEM_UTILS_H__ */

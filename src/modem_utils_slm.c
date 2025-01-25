@@ -22,13 +22,13 @@ typedef enum {
 
 #define MODEM_WORKQ_STACK_SIZE 2048
 #define MODEM_WORKQ_PRIORITY 5
-#define MQTT_PUBLISH_CHECK_TIMEOUT K_SECONDS(1)
+#define MQTT_PUBLISH_CHECK_TIMEOUT K_SECONDS(10)
 #define MQTT_PUBLISH_MAX_RETRY 3
 #define MQTT_PUBLISH_BUFFER_SIZE 1024
 
 #define SLM_SYNC_STR       "Ready\r\n"
 /* TODO: Make modem link mode configurable */
-#define SLM_LINK_MODE      "AT%XSYSTEMMODE=1,0,1,0\r\n"
+#define SLM_LINK_MODE      "AT%XSYSTEMMODE=0,1,0,0\r\n"
 #define SLM_LINK_CEREG_5   "AT+CEREG=5\r\n"
 #define SLM_LINK_CFUN_1    "AT+CFUN=1\r\n"
 /* TODO: Make MQTT cfg/con/pub arguments configurable */
@@ -218,7 +218,7 @@ int modem_cloud_connect(void)
     return 0;
 }
 
-int modem_cloud_upload_data(uint8_t *data, size_t size)
+int modem_cloud_upload_data(const uint8_t *data, size_t size)
 {
     if (!data) {
         LOG_ERR("Data is NULL");

@@ -29,8 +29,11 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 #define MODEM_BUSY_LED		DK_LED4
 
 #define DEFAULT_MEASURE_CNT 10
+#define MEASURE_BLOCK_SIZE 512
+#define UPLOAD_MEASUREMENT_TIMEOUT K_MSEC(100)
 
 static bool uploading_measurement = false;
+static struct k_work_delayable uploading_measurement_work;
 static uint32_t max_block_count = DEFAULT_MEASURE_CNT;
 
 #if CONFIG_BT_NUS
@@ -38,14 +41,15 @@ static uint32_t max_block_count = DEFAULT_MEASURE_CNT;
 #define COMMAND_UPLOAD_MEASUREMENT  'u'
 #define COMMAND_CHANGE_UPLOAD_COUNT 'c'
 
+int upload_measurement(void);
+
 static void on_nus_received(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
 	LOG_INF("Received data: %c", data[0]);
 
 	switch (*data) {
 	case COMMAND_UPLOAD_MEASUREMENT:
-		uploading_measurement = false;
-		coap_utils_modem_discover();
+		upload_measurement();
 		break;
 	
 	case COMMAND_CHANGE_UPLOAD_COUNT:
@@ -97,8 +101,7 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 
 	if (buttons & DK_BTN1_MSK) {
 		//TODO: reset uploading_measurement flag when uploading is done or timeout
-		uploading_measurement = false;
-		coap_utils_modem_discover();
+		upload_measurement();
 	}
 
 	if (buttons & DK_BTN2_MSK) {
@@ -200,6 +203,7 @@ static void on_meter_block_tx(void *context,
 	{
 		block_count = 0;
 		*more     = false;
+		uploading_measurement = false;
 	}
 	else
 	{
@@ -220,7 +224,7 @@ static otError on_meter_block_rx(void *context,
 
 	LOG_INF("received block: Num %i Len %i more: %d", position / block_length, block_length, more);
 	LOG_HEXDUMP_INF(block, block_length, "Received block:");
-	ret = modem_cloud_upload_data(block, block_length);
+	ret = modem_cloud_upload_data(block, (size_t)block_length);
 	if (ret != 0) {
 		LOG_ERR("Fail to upload received block to cloud");
 		if (ret == -EBUSY) {
@@ -257,6 +261,74 @@ static void on_modem_state_change(modem_state state)
 	default:
 		break;
 	}
+}
+
+void uploading_measurement_handler(struct k_work *work)
+{
+	static uint32_t block_count = 0;
+
+	if (uploading_measurement) {
+		uint8_t block[MEASURE_BLOCK_SIZE];
+		int ret;
+
+		/* Fill tx block with ascii 0 ~ 9 */
+		for (uint16_t i = 0; i < MEASURE_BLOCK_SIZE; i++) {
+			block[i] = 48 + i % 10;
+		}
+		ret = modem_cloud_upload_data(block, MEASURE_BLOCK_SIZE);
+		if (ret != 0) {
+			LOG_ERR("Fail to upload received block to cloud");
+			if (ret == -EBUSY) {
+				LOG_INF("Modem is busy, wait for next round");
+				k_work_schedule(&uploading_measurement_work, UPLOAD_MEASUREMENT_TIMEOUT);
+			} else if (ret == -ENOMEM) {
+				LOG_ERR("No memory to upload data");
+				goto error;
+			} else {
+				LOG_ERR("Fail to upload data to cloud");
+				goto error;
+			}
+		} else {
+			LOG_INF("Sent block: Num %i Len %i", block_count, MEASURE_BLOCK_SIZE);
+			if (block_count == max_block_count - 1) {
+				block_count = 0;
+				uploading_measurement = false;
+				modem_set_state(MODEM_STATE_IDLE);
+			} else {
+				block_count++;
+				k_work_schedule(&uploading_measurement_work, UPLOAD_MEASUREMENT_TIMEOUT);
+			}
+		}
+	}
+	return;
+error:
+	block_count = 0;
+	uploading_measurement = false;
+	modem_set_state(MODEM_STATE_IDLE);
+	return;
+}
+
+int upload_measurement(void)
+{
+	if (uploading_measurement) {
+		LOG_INF("Already uploading measurement");
+		return -EBUSY;
+	}
+
+	if (modem_get_state() == MODEM_STATE_IDLE) {
+		LOG_INF("Modem is idle, start uploading measurement");
+		modem_set_state(MODEM_STATE_BUSY);
+		uploading_measurement = true;
+		k_work_schedule(&uploading_measurement_work, K_NO_WAIT);
+	} else if (modem_get_state() == MODEM_STATE_BUSY) {
+		LOG_INF("Modem is busy, wait for next round");
+		return -EBUSY;
+	} else {
+		LOG_INF("Modem is off. Ask remote modem to upload measurement");
+		coap_utils_modem_discover();
+	}
+
+	return 0;
 }
 
 int main(void)
@@ -330,11 +402,12 @@ int main(void)
 	(void)uart_line_ctrl_set(dev, UART_LINE_CTRL_DSR, 1);
 #endif
 
+	k_work_init_delayable(&uploading_measurement_work, uploading_measurement_handler);
+
 	ret = ot_coap_init(&on_modem_request, &on_meter_block_tx, &on_meter_block_rx);
 	if (ret) {
 		LOG_ERR("Could not initialize OpenThread CoAP");
 	}
-
 	coap_client_utils_init(on_ot_connect, on_ot_disconnect);
 
 	ret = modem_init(on_modem_state_change);
