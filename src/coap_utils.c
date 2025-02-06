@@ -28,21 +28,6 @@ static struct k_work meter_upload_work;
 static struct k_work on_connect_work;
 static struct k_work on_disconnect_work;
 
-/* Options supported by the server */
-static const char *const modem_option[] = { MODEM_URI_PATH, NULL };
-/*
-static const char *const provisioning_option[] = { METER_URI_PATH,
-						   NULL };
-*/
-/* Thread multicast mesh local address */
-static struct sockaddr_in6 multicast_local_addr = {
-	.sin6_family = AF_INET6,
-	.sin6_port = htons(COAP_PORT),
-	.sin6_addr.s6_addr = { 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 },
-	.sin6_scope_id = 0U
-};
-
 /* Variable for storing peer address acquiring in modem upload measurement handshake */
 static otIp6Address metter_peer_address;
 
@@ -260,10 +245,52 @@ static void send_modem_discover_request(struct k_work *item)
 	ARG_UNUSED(item);
 	uint8_t command = (uint8_t)MODEM_COMMAND_DISCOVER;
 
-	LOG_INF("Send 'discover' request");
-	coap_send_request(COAP_METHOD_PUT,
-			  (const struct sockaddr *)&multicast_local_addr,
-			  modem_option, &command, sizeof(command), NULL);
+	otError error = OT_ERROR_NO_BUFS;
+	otMessage *message;
+	char uri[] = "modem";
+	char multicast_address[] = "ff03::01";
+	otMessageInfo message_info;
+
+	message = otCoapNewMessage(srv_context.ot, NULL);
+	if (message == NULL) {
+		goto end;
+	}
+
+	otCoapMessageInit(message, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_PUT);
+	otCoapMessageGenerateToken(message, OT_COAP_DEFAULT_TOKEN_LENGTH);
+	error = otCoapMessageAppendUriPathOptions(message, uri);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otCoapMessageSetPayloadMarker(message);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	error = otMessageAppend(message, &command, sizeof(command));
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+
+	memset(&message_info, 0, sizeof(message_info));
+	error = otIp6AddressFromString(multicast_address, &message_info.mPeerAddr);
+	if (error != OT_ERROR_NONE) {
+		goto end;
+	}
+	message_info.mPeerPort = COAP_PORT;
+	message_info.mMulticastLoop = false;
+
+	error = otCoapSendRequest(srv_context.ot, message, &message_info, NULL, NULL);
+	LOG_INF("Sent modem state discover to address: %s", multicast_address);
+
+end:
+	if (error != OT_ERROR_NONE && message != NULL) {
+		LOG_ERR("Failed to send modem state: %d", error);
+		otMessageFree(message);
+	}
+
+	return;
 }
 
 static void meter_response_handler(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
@@ -306,7 +333,6 @@ static void send_meter_upload_request(struct k_work *item)
 	otMessage *message;
 	otMessageInfo message_info;
 	char uri[] = "meter";
-	//uint8_t modem_command = MODEM_COMMAND_REPORT_STATE;
 
 	message = otCoapNewMessage(srv_context.ot, NULL);
 	if (message == NULL) {
