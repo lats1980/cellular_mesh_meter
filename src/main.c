@@ -30,9 +30,11 @@ LOG_MODULE_REGISTER(cellular_mesh_meter, CONFIG_CELLULAR_MESH_METER_LOG_LEVEL);
 
 #define DEFAULT_MEASURE_CNT 10
 #define MEASURE_BLOCK_SIZE 512
-#define UPLOAD_MEASUREMENT_TIMEOUT K_MSEC(100)
+#define UPLOAD_MEASUREMENT_TIMEOUT		K_MSEC(100)
+#define UPLOAD_MEASUREMENT_RETRY_LIMIT	100
 
 static bool uploading_measurement = false;
+static uint16_t uploading_measurement_retry_count = 0;
 static struct k_work_delayable uploading_measurement_work;
 static uint32_t max_block_count = DEFAULT_MEASURE_CNT;
 
@@ -100,7 +102,6 @@ static void on_button_changed(uint32_t button_state, uint32_t has_changed)
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
-		//TODO: reset uploading_measurement flag when uploading is done or timeout
 		upload_measurement();
 	}
 
@@ -203,7 +204,6 @@ static void on_meter_block_tx(void *context,
 	{
 		block_count = 0;
 		*more     = false;
-		uploading_measurement = false;
 	}
 	else
 	{
@@ -244,6 +244,18 @@ static otError on_meter_block_rx(void *context,
 	return OT_ERROR_NONE;
 }
 
+static void on_meter_response(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
+{
+	if (error != OT_ERROR_NONE)
+	{
+		LOG_ERR("coap receive response error %d: %s", error, otThreadErrorToString(error));
+	}
+	/* Upload finiched */
+	uploading_measurement = false;
+	LOG_INF("Upload finished");
+	return;
+}
+
 static void on_modem_state_change(modem_state state)
 {
 	dk_set_led_off(MODEM_IDLE_LED);
@@ -277,6 +289,11 @@ void uploading_measurement_handler(struct k_work *work)
 		ret = modem_cloud_upload_data(block, MEASURE_BLOCK_SIZE);
 		if (ret != 0) {
 			if (ret == -EBUSY) {
+				uploading_measurement_retry_count++;
+				if (uploading_measurement_retry_count > UPLOAD_MEASUREMENT_RETRY_LIMIT) {
+					LOG_ERR("Retry limit reached");
+					goto error;
+				}
 				LOG_DBG("Modem is busy, wait for next round");
 				k_work_schedule(&uploading_measurement_work, UPLOAD_MEASUREMENT_TIMEOUT);
 			} else if (ret == -ENOMEM) {
@@ -288,6 +305,7 @@ void uploading_measurement_handler(struct k_work *work)
 			}
 		} else {
 			LOG_INF("Sent block: Num %i Len %i", block_count, MEASURE_BLOCK_SIZE);
+			uploading_measurement_retry_count = 0;
 			if (block_count == max_block_count - 1) {
 				block_count = 0;
 				uploading_measurement = false;
@@ -302,7 +320,7 @@ void uploading_measurement_handler(struct k_work *work)
 error:
 	block_count = 0;
 	uploading_measurement = false;
-	modem_set_state(MODEM_STATE_IDLE);
+	uploading_measurement_retry_count = 0;
 	return;
 }
 
@@ -402,7 +420,7 @@ int main(void)
 
 	k_work_init_delayable(&uploading_measurement_work, uploading_measurement_handler);
 
-	ret = ot_coap_init(&on_modem_request, &on_meter_block_tx, &on_meter_block_rx);
+	ret = ot_coap_init(&on_modem_request, &on_meter_block_tx, &on_meter_block_rx, &on_meter_response);
 	if (ret) {
 		LOG_ERR("Could not initialize OpenThread CoAP");
 	}

@@ -103,11 +103,17 @@ typedef otError (*meter_block_rx_callback_t)(void *aContext,
 											 uint32_t aTotalLength);
 
 /**
+ * @brief Callback function for meter response.
+ */
+typedef void (*meter_response_callback_t)(void *context, otMessage *message, const otMessageInfo *message_info, otError error);
+
+/**
  * @brief Initialize CoAP server utilities.
  */
 int ot_coap_init(modem_request_callback_t on_modem_request,
 				 meter_block_tx_callback_t on_meter_block_tx,
-				 meter_block_rx_callback_t on_meter_block_rx);
+				 meter_block_rx_callback_t on_meter_block_rx,
+				 meter_response_callback_t on_meter_response);
 
 #endif
 

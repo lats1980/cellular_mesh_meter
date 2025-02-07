@@ -36,6 +36,7 @@ struct server_context {
 	modem_request_callback_t on_modem_request;
 	meter_block_tx_callback_t on_meter_block_tx;
 	meter_block_rx_callback_t on_meter_block_rx;
+	meter_response_callback_t on_meter_response;
 };
 
 static struct server_context srv_context = {
@@ -43,6 +44,7 @@ static struct server_context srv_context = {
 	.on_modem_request = NULL,
 	.on_meter_block_tx = NULL,
 	.on_meter_block_rx = NULL,
+	.on_meter_response = NULL,
 };
 
 /**@brief Definition of CoAP block resources for meter. */
@@ -295,15 +297,7 @@ end:
 
 static void meter_response_handler(void *context, otMessage *message, const otMessageInfo *message_info, otError error)
 {
-	if (error != OT_ERROR_NONE)
-	{
-		LOG_ERR("coap receive response error %d: %s", error, otThreadErrorToString(error));
-	}
-	else if ((message_info != NULL) && (message != NULL))
-	{
-		LOG_INF("coap response received from ");
-		LOG_HEXDUMP_INF(message_info->mPeerAddr.mFields.m8, sizeof(message_info->mPeerAddr.mFields.m8), "peer address:");
-	}
+	srv_context.on_meter_response(context, message, message_info, error);
 }
 
 otError meter_block_tx_hook(void *context,
@@ -483,13 +477,15 @@ static void coap_default_handler(void *context, otMessage *message,
 
 int ot_coap_init(modem_request_callback_t on_modem_request,
 				 meter_block_tx_callback_t on_meter_block_tx,
-				 meter_block_rx_callback_t on_meter_block_rx)
+				 meter_block_rx_callback_t on_meter_block_rx,
+				 meter_response_callback_t on_meter_response)
 {
 	otError error;
 
 	srv_context.on_modem_request = on_modem_request;
 	srv_context.on_meter_block_tx = on_meter_block_tx;
 	srv_context.on_meter_block_rx = on_meter_block_rx;
+	srv_context.on_meter_response = on_meter_response;
 
 	srv_context.ot = openthread_get_default_instance();
 	if (!srv_context.ot) {
