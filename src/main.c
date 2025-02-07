@@ -226,9 +226,8 @@ static otError on_meter_block_rx(void *context,
 	LOG_HEXDUMP_INF(block, block_length, "Received block:");
 	ret = modem_cloud_upload_data(block, (size_t)block_length);
 	if (ret != 0) {
-		LOG_ERR("Fail to upload received block to cloud");
 		if (ret == -EBUSY) {
-			LOG_INF("Modem is busy, wait for next round");
+			LOG_DBG("Modem is busy, wait for next round");
 			return OT_ERROR_BUSY;
 		} else if (ret == -ENOMEM) {
 			LOG_ERR("No memory to upload data");
@@ -277,9 +276,8 @@ void uploading_measurement_handler(struct k_work *work)
 		}
 		ret = modem_cloud_upload_data(block, MEASURE_BLOCK_SIZE);
 		if (ret != 0) {
-			LOG_ERR("Fail to upload received block to cloud");
 			if (ret == -EBUSY) {
-				LOG_INF("Modem is busy, wait for next round");
+				LOG_DBG("Modem is busy, wait for next round");
 				k_work_schedule(&uploading_measurement_work, UPLOAD_MEASUREMENT_TIMEOUT);
 			} else if (ret == -ENOMEM) {
 				LOG_ERR("No memory to upload data");

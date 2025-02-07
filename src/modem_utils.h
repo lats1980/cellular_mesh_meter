@@ -3,6 +3,7 @@
 
 /**@brief Enumeration describing modem state. */
 typedef enum {
+	MODEM_STATE_UNKNOWN,
 	MODEM_STATE_OFF,
 	MODEM_STATE_IDLE,
 	MODEM_STATE_BUSY

@@ -7,13 +7,13 @@
 
 LOG_MODULE_REGISTER(modem_util, CONFIG_MODEM_UTILS_LOG_LEVEL);
 
-static modem_state current_modem_state = MODEM_STATE_OFF;
+static modem_state current_modem_state = MODEM_STATE_UNKNOWN;
 static modem_utils_state_handler_t state_handler;
 
 int modem_init(modem_utils_state_handler_t handler)
 {
     state_handler = handler;
-    state_handler(current_modem_state);
+    state_handler(MODEM_STATE_OFF);
 
     return 0;
 }
