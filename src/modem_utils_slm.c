@@ -26,7 +26,7 @@ typedef enum {
 #define MQTT_PUBLISH_MAX_RETRY 3
 #define MQTT_PUBLISH_BUFFER_SIZE 1024
 
-#define SLM_SYNC_CHECK_TIMEOUT K_MSEC(CONFIG_MODEM_SLM_WAKEUP_TIME + 1000)
+#define SLM_SYNC_CHECK_TIMEOUT K_MSEC(CONFIG_MODEM_SLM_POWER_PIN_TIME + 1000)
 #define SLM_SYNC_STR       "Ready\r\n"
 /* TODO: Make modem link mode configurable */
 #define SLM_LINK_MODE      "AT%XSYSTEMMODE=0,1,0,0\r\n"
@@ -135,7 +135,7 @@ static void modem_sync_check(struct k_work *work)
     if (current_modem_state == MODEM_STATE_UNKNOWN) {
         int ret;
         LOG_ERR("Modem not sync. Wake up SLM now");
-        ret = modem_slm_wake_up();
+        ret = modem_slm_power_pin_toggle();
         if (ret) {
             LOG_ERR("Cannot wake up SLM (error: %d)", ret);
         } else {
